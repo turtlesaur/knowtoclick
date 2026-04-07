@@ -12,6 +12,8 @@ from clicker import (
     screen_to_client,
     ActivitySignaler,
     MIN_INTERVAL,
+    METHODS,
+    METHOD_POST_FULL,
 )
 
 
@@ -65,6 +67,17 @@ class App:
         ttk.Entry(frame_settings, textvariable=self.jitter_var, width=8).grid(row=1, column=1, padx=4, pady=(4, 0))
         ttk.Label(frame_settings, text="(0-1, fraction of interval)").grid(
             row=1, column=2, columnspan=4, sticky="w", padx=(12, 0), pady=(4, 0)
+        )
+
+        ttk.Label(frame_settings, text="Method:").grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.method_var = tk.StringVar(value=METHOD_POST_FULL)
+        method_combo = ttk.Combobox(
+            frame_settings, textvariable=self.method_var,
+            values=METHODS, state="readonly", width=25,
+        )
+        method_combo.grid(row=2, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="w")
+        ttk.Label(frame_settings, text="(try 'full sequence' first)").grid(
+            row=2, column=4, columnspan=2, sticky="w", padx=(4, 0), pady=(4, 0)
         )
 
         # --- Coordinate Picker ---
@@ -212,6 +225,7 @@ class App:
             x=self.x_var.get(),
             y=self.y_var.get(),
             jitter=self.jitter_var.get(),
+            method=self.method_var.get(),
         )
         self.signaler.start()
 

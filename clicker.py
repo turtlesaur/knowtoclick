@@ -1,5 +1,7 @@
-"""Background window clicker using Win32 PostMessage."""
+"""Background window clicker with multiple input methods."""
 
+import ctypes
+import ctypes.wintypes
 import random
 import threading
 import time
@@ -11,6 +13,13 @@ import win32gui
 # PostMessage LPARAM packs x/y into 16 bits each
 MAX_COORD = 65535
 MIN_INTERVAL = 0.5
+
+# Click method names
+METHOD_POST = "PostMessage"
+METHOD_SEND = "SendMessage"
+METHOD_POST_FULL = "PostMessage (full sequence)"
+
+METHODS = [METHOD_POST, METHOD_SEND, METHOD_POST_FULL]
 
 
 def enum_visible_windows():
@@ -37,10 +46,7 @@ def get_client_rect(hwnd):
 
 
 def clamp_to_client_area(hwnd, x, y):
-    """Clamp x, y to the window's actual client area bounds.
-
-    Returns clamped (x, y). If the window is invalid, returns (0, 0).
-    """
+    """Clamp x, y to the window's actual client area bounds."""
     rect = get_client_rect(hwnd)
     if rect is None:
         return (0, 0)
@@ -51,10 +57,7 @@ def clamp_to_client_area(hwnd, x, y):
 
 
 def screen_to_client(hwnd, screen_x, screen_y):
-    """Convert absolute screen coordinates to window-local client coordinates.
-
-    Returns (client_x, client_y) or None if the window handle is invalid.
-    """
+    """Convert absolute screen coordinates to window-local client coordinates."""
     if not win32gui.IsWindow(hwnd):
         return None
     client_x, client_y = win32gui.ScreenToClient(hwnd, (screen_x, screen_y))
@@ -68,23 +71,70 @@ def make_lparam(x, y):
     return win32api.MAKELONG(x, y)
 
 
-def send_background_click(hwnd, x=100, y=100):
-    """Send a click (down + up) to a window without focusing it.
+def _click_post(hwnd, x, y):
+    """Basic PostMessage click - just down + up."""
+    lparam = make_lparam(x, y)
+    win32gui.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+    time.sleep(random.uniform(0.03, 0.08))
+    win32gui.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
 
-    Uses PostMessage so the target window does not need to be in the foreground.
-    Coordinates are clamped to the window's client area.
+
+def _click_send(hwnd, x, y):
+    """SendMessage click - synchronous, blocks until the window processes it."""
+    lparam = make_lparam(x, y)
+    win32gui.SendMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+    time.sleep(random.uniform(0.03, 0.08))
+    win32gui.SendMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+
+
+def _click_post_full(hwnd, x, y):
+    """Full message sequence via PostMessage.
+
+    Sends activation, focus, mouse move, then click. This mimics what Windows
+    actually delivers when a real user clicks inside a window. Many game
+    frameworks need these preceding messages to register the click.
+    """
+    lparam = make_lparam(x, y)
+
+    # Activate the window's message processing without actually bringing it
+    # to the foreground (WA_CLICKACTIVATE tells the app "a click caused this")
+    win32gui.PostMessage(
+        hwnd, win32con.WM_ACTIVATE,
+        win32con.WA_CLICKACTIVATE, 0,
+    )
+    win32gui.PostMessage(hwnd, win32con.WM_SETFOCUS, 0, 0)
+
+    # Move the "mouse" to the target position first
+    win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+    time.sleep(random.uniform(0.01, 0.03))
+
+    # Click
+    win32gui.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+    time.sleep(random.uniform(0.03, 0.08))
+    win32gui.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+
+
+# Map method name -> function
+_METHOD_FUNCS = {
+    METHOD_POST: _click_post,
+    METHOD_SEND: _click_send,
+    METHOD_POST_FULL: _click_post_full,
+}
+
+
+def send_background_click(hwnd, x=100, y=100, method=METHOD_POST):
+    """Send a click to a window using the specified method.
+
     Returns True if sent successfully, False if the window is gone.
     """
     if not win32gui.IsWindow(hwnd):
         return False
 
     x, y = clamp_to_client_area(hwnd, x, y)
-    lparam = make_lparam(x, y)
+    func = _METHOD_FUNCS.get(method, _click_post)
 
     try:
-        win32gui.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
-        time.sleep(random.uniform(0.03, 0.08))
-        win32gui.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+        func(hwnd, x, y)
     except win32gui.error:
         return False
 
@@ -94,25 +144,19 @@ def send_background_click(hwnd, x=100, y=100):
 class ActivitySignaler:
     """Periodically sends background clicks to a target window."""
 
-    def __init__(self, hwnd, interval=5.0, x=100, y=100, jitter=0.3):
-        """
-        Args:
-            hwnd: Target window handle.
-            interval: Base seconds between clicks (minimum 0.5s).
-            x, y: Click coordinates (relative to the window's client area).
-            jitter: Fraction of interval to randomize (+/-). Clamped to 0-1.
-        """
+    def __init__(self, hwnd, interval=5.0, x=100, y=100, jitter=0.3,
+                 method=METHOD_POST):
         self.hwnd = hwnd
         self.interval = max(MIN_INTERVAL, float(interval))
         self.x = int(x)
         self.y = int(y)
         self.jitter = max(0.0, min(1.0, float(jitter)))
+        self.method = method
         self._stop_event = threading.Event()
         self._thread = None
         self._click_count = 0
 
     def start(self):
-        """Start sending clicks in a background thread."""
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -121,7 +165,6 @@ class ActivitySignaler:
         self._thread.start()
 
     def stop(self):
-        """Stop the click loop."""
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
@@ -136,7 +179,7 @@ class ActivitySignaler:
 
     def _run(self):
         while not self._stop_event.is_set():
-            if not send_background_click(self.hwnd, self.x, self.y):
+            if not send_background_click(self.hwnd, self.x, self.y, self.method):
                 break
             self._click_count += 1
             jitter_amount = self.interval * self.jitter
