@@ -13,7 +13,7 @@ from clicker import (
     ActivitySignaler,
     MIN_INTERVAL,
     METHODS,
-    METHOD_POST_FULL,
+    METHOD_SENDINPUT,
 )
 
 
@@ -70,13 +70,13 @@ class App:
         )
 
         ttk.Label(frame_settings, text="Method:").grid(row=2, column=0, sticky="w", pady=(4, 0))
-        self.method_var = tk.StringVar(value=METHOD_POST_FULL)
+        self.method_var = tk.StringVar(value=METHOD_SENDINPUT)
         method_combo = ttk.Combobox(
             frame_settings, textvariable=self.method_var,
             values=METHODS, state="readonly", width=25,
         )
         method_combo.grid(row=2, column=1, columnspan=3, padx=4, pady=(4, 0), sticky="w")
-        ttk.Label(frame_settings, text="(try 'full sequence' first)").grid(
+        ttk.Label(frame_settings, text="(SendInput works with any engine)").grid(
             row=2, column=4, columnspan=2, sticky="w", padx=(4, 0), pady=(4, 0)
         )
 
